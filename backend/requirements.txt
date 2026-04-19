@@ -1,0 +1,10 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+httpx==0.28.1
+pydantic==2.11.7
+sqlalchemy==2.0.43
+psycopg[binary]==3.2.9
+langgraph==0.6.6
+langchain-core==0.3.75
+langchain-deepseek==0.1.4
+itsdangerous==2.2.0
