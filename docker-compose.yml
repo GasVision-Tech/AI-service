@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gasvision_ai_postgres
+    environment:
+      POSTGRES_DB: ${AI_DB_NAME:?AI_DB_NAME is required}
+      POSTGRES_USER: ${AI_DB_USER:?AI_DB_USER is required}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD:?AI_DB_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    container_name: gasvision_ai_backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${AI_DB_USER:?AI_DB_USER is required}:${AI_DB_PASSWORD:?AI_DB_PASSWORD is required}@postgres:5432/${AI_DB_NAME:?AI_DB_NAME is required}
+      EVENT_SERVICE_BASE_URL: ${EVENT_SERVICE_BASE_URL:?EVENT_SERVICE_BASE_URL is required}
+      DISPATCHER_PHONE: ${DISPATCHER_PHONE:?DISPATCHER_PHONE is required}
+      QR_ACCESS_SECRET: ${QR_ACCESS_SECRET:?QR_ACCESS_SECRET is required}
+      QR_TOKEN_MAX_AGE_SECONDS: ${QR_TOKEN_MAX_AGE_SECONDS:-86400}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?DEEPSEEK_API_KEY is required}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-90}
+      DEEPSEEK_MAX_RETRIES: ${DEEPSEEK_MAX_RETRIES:-2}
+      CORS_ORIGINS: ${AI_CORS_ORIGINS:?AI_CORS_ORIGINS is required}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8021:8021"
+
+  frontend:
+    build: ./frontend
+    container_name: gasvision_ai_frontend
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: gasvision_ai_nginx
+    depends_on:
+      - frontend
+      - backend
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8089:80"
+
+volumes:
+  postgres_data:
