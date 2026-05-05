@@ -17,6 +17,7 @@ services:
   backend:
     build: ./backend
     container_name: gasvision_ai_backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8021 --workers ${UVICORN_WORKERS:-2}
     environment:
       DATABASE_URL: postgresql+psycopg://${AI_DB_USER:?AI_DB_USER is required}:${AI_DB_PASSWORD:?AI_DB_PASSWORD is required}@postgres:5432/${AI_DB_NAME:?AI_DB_NAME is required}
       EVENT_SERVICE_BASE_URL: ${EVENT_SERVICE_BASE_URL:?EVENT_SERVICE_BASE_URL is required}
