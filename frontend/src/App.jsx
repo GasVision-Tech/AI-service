@@ -296,7 +296,7 @@ export default function App() {
     } catch {
       appendMessage({
         role: 'assistant',
-        text: 'Не удалось получить ответ AI.',
+        text: 'Я не могу надежно ответить на этот вопрос по доступному регламенту. Пожалуйста, обратитесь к диспетчеру — для этого нажмите кнопку «Связаться с диспетчером» в приложении.',
       })
       setLastAiExchange(null)
       setAwaitingFeedback(false)
