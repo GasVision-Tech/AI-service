@@ -67,6 +67,10 @@ function createEphemeralSessionId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+function createMessageId() {
+  return globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const STATION_ENTRIES = [
   {
     stationCode: 'AZS-001',
@@ -125,7 +129,7 @@ export default function App() {
     })
     setMessages([
       {
-        id: crypto.randomUUID(),
+        id: createMessageId(),
         role: 'assistant',
         text: `Здравствуйте! Вы подключены к станции ${data.station_code}. Чем могу помочь?`,
       },
@@ -159,8 +163,8 @@ export default function App() {
   async function startStation(stationCode, updateUrl = true) {
     if (updateUrl) {
       const station = STATION_ENTRIES.find((item) => item.stationCode === stationCode)
-      window.location.assign(station?.path || '/')
-      return
+      const nextPath = station?.path || '/'
+      window.history.pushState({}, '', nextPath)
     }
 
     await loadStation(stationCode)
@@ -203,7 +207,7 @@ export default function App() {
         })
         setMessages([
           {
-            id: crypto.randomUUID(),
+            id: createMessageId(),
             role: 'assistant',
             text: `Здравствуйте! Вы подключены к станции ${data.station_code}. Чем могу помочь?`,
           },
@@ -248,7 +252,7 @@ export default function App() {
   }, [mode])
 
   function appendMessage(message) {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), ...message }])
+    setMessages((prev) => [...prev, { id: createMessageId(), ...message }])
   }
 
   function removeFeedbackMessage() {
