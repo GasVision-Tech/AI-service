@@ -28,7 +28,7 @@ body,
 
   --nav-height: 86px;
   --faq-height: 220px;
-  --composer-height: 92px;
+  --composer-height: 198px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -314,25 +314,30 @@ body {
 .composer {
   display: flex;
   gap: 8px;
-  align-items: stretch;
+  align-items: flex-end;
   background: rgba(255, 255, 255, 0.98);
   backdrop-filter: blur(10px);
   border: 1px solid #e5edf6;
   border-radius: 18px;
   padding: 8px;
   box-shadow: 0 8px 24px rgba(18, 32, 56, 0.08);
+  min-width: 0;
 }
 
 .composer-input {
   flex: 1;
+  min-width: 0;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   padding: 12px 14px;
   font-size: 16px;
-  line-height: 1.25;
+  line-height: 1.35;
   min-height: 44px;
+  max-height: 172px;
   background: white;
   outline: none;
+  resize: none;
+  overflow-y: auto;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -342,23 +347,91 @@ body {
 }
 
 .composer-send {
+  display: grid;
+  place-items: center;
   border: none;
   background: var(--primary);
   color: #fff;
-  border-radius: 14px;
-  padding: 0 16px;
-  min-width: 120px;
-  min-height: 44px;
+  border-radius: 50%;
+  padding: 0;
+  width: 52px;
+  min-width: 52px;
+  min-height: 52px;
   font-weight: 600;
-  transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease;
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.22);
+  transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.composer-mic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  min-width: 52px;
+  min-height: 52px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: radial-gradient(circle at 45% 36%, #ffffff 0 58%, #f2f5fa 100%);
+  color: #171b22;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(18, 32, 56, 0.08);
+  transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.composer-mic.recording {
+  background: #fff5f5;
+  color: var(--danger-text);
+  border-color: #fecdca;
+  box-shadow: 0 0 0 6px rgba(180, 35, 24, 0.08), 0 8px 18px rgba(180, 35, 24, 0.12);
+}
+
+.mic-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.mic-loading {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #d8e0eb;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.send-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.send-loading {
+  width: 22px;
+  height: 22px;
+  border: 3px solid rgba(255, 255, 255, 0.42);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .composer-send:disabled {
   opacity: 0.6;
 }
 
+.composer-mic:disabled {
+  opacity: 0.55;
+}
+
 .composer-send:active {
   transform: scale(0.98);
+}
+
+.composer-mic:active {
+  transform: scale(0.96);
 }
 
 .faq-panel {
@@ -427,7 +500,7 @@ body {
   transform: translateX(-50%);
   width: min(720px, 100%);
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 1.3fr) minmax(0, 1fr);
   gap: 8px;
   padding: 10px 12px calc(max(10px, var(--safe-bottom)));
   background: rgba(255, 255, 255, 0.98);
@@ -439,17 +512,54 @@ body {
 .nav-btn {
   border: none;
   border-radius: 16px;
-  padding: 13px 10px;
+  padding: 12px 8px;
   background: var(--primary-soft);
   font-weight: 600;
   font-size: 13px;
   min-height: 50px;
-  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease;
+  line-height: 1.12;
+  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .nav-btn.active {
   background: var(--primary);
   color: white;
+}
+
+.nav-btn-ai {
+  position: relative;
+  overflow: hidden;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  background: linear-gradient(115deg, #0f8f67, #1d4ed8, #6d5dfc, #0f8f67);
+  background-size: 260% 260%;
+  box-shadow: 0 10px 22px rgba(29, 78, 216, 0.24);
+  animation: aiGlow 5.2s ease-in-out infinite;
+}
+
+.nav-btn-ai::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 0 34%, rgba(255, 255, 255, 0.34) 45%, transparent 56% 100%);
+  transform: translateX(-120%);
+  animation: aiShine 3.4s ease-in-out infinite;
+}
+
+.nav-btn-ai.active {
+  background: linear-gradient(115deg, #0f8f67, #1d4ed8, #6d5dfc, #0f8f67);
+  background-size: 260% 260%;
+}
+
+.nav-btn-ai:disabled {
+  animation: none;
+}
+
+.nav-btn-faq,
+.nav-btn-dispatcher {
+  font-size: 12px;
+  width: 100%;
 }
 
 .nav-btn:active {
@@ -478,6 +588,32 @@ body {
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes aiGlow {
+  0%, 100% {
+    background-position: 0% 50%;
+    box-shadow: 0 10px 22px rgba(29, 78, 216, 0.22);
+  }
+  50% {
+    background-position: 100% 50%;
+    box-shadow: 0 12px 26px rgba(15, 143, 103, 0.26);
+  }
+}
+
+@keyframes aiShine {
+  0%, 45% {
+    transform: translateX(-120%);
+  }
+  75%, 100% {
+    transform: translateX(120%);
+  }
+}
+
 @media (min-width: 721px) {
   .app-shell {
     box-shadow: var(--shadow);
@@ -488,7 +624,7 @@ body {
   :root {
     --nav-height: 90px;
     --faq-height: 220px;
-    --composer-height: 96px;
+    --composer-height: 252px;
   }
 
   .header {
@@ -526,11 +662,20 @@ body {
   }
 
   .composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 52px 52px;
+    align-items: end;
     padding: 8px;
     gap: 8px;
   }
 
+  .composer-input {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .composer-send,
+  .composer-mic,
   .inline-feedback-btn,
   .faq-button,
   .nav-btn {
@@ -538,8 +683,14 @@ body {
   }
 
   .composer-send {
-    min-width: 112px;
-    padding: 0 14px;
+    width: 52px;
+    min-width: 52px;
+    padding: 0;
+  }
+
+  .composer-mic {
+    width: 52px;
+    min-width: 52px;
   }
 
   .inline-feedback {
@@ -551,19 +702,37 @@ body {
   :root {
     --nav-height: 92px;
     --faq-height: 212px;
-    --composer-height: 98px;
+    --composer-height: 252px;
   }
 
   .nav-btn {
-    font-size: 12px;
-    padding: 12px 8px;
+    font-size: 11px;
+    padding: 11px 7px;
+  }
+
+  .nav-btn-ai {
+    font-size: 14px;
+  }
+
+  .composer {
+    grid-template-columns: minmax(0, 1fr) 48px 48px;
+    gap: 6px;
+  }
+
+  .composer-send {
+    width: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 0;
+  }
+
+  .composer-mic {
+    width: 48px;
+    min-width: 48px;
+    min-height: 48px;
   }
 
   .composer-input {
     padding: 13px 14px;
-  }
-
-  .composer-send {
-    min-width: 104px;
   }
 }

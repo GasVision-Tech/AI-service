@@ -16,6 +16,8 @@ project documentation.
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -24,7 +26,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal, TypedDict
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -32,7 +34,7 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, Integer, String, Text, create_engine
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -56,6 +58,12 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_TIMEOUT_SECONDS = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "90"))
 DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "2"))
 CORS_ORIGINS = [item.strip() for item in require_env("CORS_ORIGINS").split(",") if item.strip()]
+YANDEX_SPEECHKIT_API_KEY = os.getenv("YANDEX_SPEECHKIT_API_KEY", "")
+YANDEX_SPEECHKIT_FOLDER_ID = os.getenv("YANDEX_SPEECHKIT_FOLDER_ID", "")
+YANDEX_SPEECHKIT_LANG = os.getenv("YANDEX_SPEECHKIT_LANG", "ru-RU")
+YANDEX_SPEECHKIT_TOPIC = os.getenv("YANDEX_SPEECHKIT_TOPIC", "general")
+YANDEX_SPEECHKIT_TIMEOUT_SECONDS = float(os.getenv("YANDEX_SPEECHKIT_TIMEOUT_SECONDS", "30"))
+VOICE_MAX_BYTES = int(os.getenv("VOICE_MAX_BYTES", str(3 * 1024 * 1024)))
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +208,85 @@ class EventServiceClient:
 
 
 event_client = EventServiceClient(EVENT_SERVICE_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# Speech-to-text integration
+# ---------------------------------------------------------------------------
+class SpeechKitClient:
+    """Small wrapper around Yandex SpeechKit synchronous STT.
+
+    Browser MediaRecorder usually produces Ogg/Opus or WebM/Opus. SpeechKit
+    accepts OggOpus, so the backend normalizes uploads with ffmpeg before
+    sending them to Yandex.
+    """
+
+    _recognize_url = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
+
+    def __init__(self, api_key: str, folder_id: str = "") -> None:
+        self._api_key = api_key
+        self._folder_id = folder_id
+
+    def _ensure_configured(self) -> None:
+        if not self._api_key:
+            raise HTTPException(status_code=503, detail="Speech-to-text is not configured")
+
+    @staticmethod
+    def _convert_to_oggopus(audio: bytes) -> bytes:
+        with tempfile.NamedTemporaryFile(suffix=".input", delete=True) as source:
+            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=True) as target:
+                source.write(audio)
+                source.flush()
+                command = [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    source.name,
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "32k",
+                    target.name,
+                ]
+                try:
+                    subprocess.run(command, check=True, capture_output=True, timeout=20)
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                    raise HTTPException(status_code=400, detail="Unsupported or invalid audio") from exc
+
+                target.seek(0)
+                return target.read()
+
+    async def transcribe(self, audio: bytes) -> str:
+        self._ensure_configured()
+        ogg_audio = self._convert_to_oggopus(audio)
+        params = {
+            "lang": YANDEX_SPEECHKIT_LANG,
+            "topic": YANDEX_SPEECHKIT_TOPIC,
+            "format": "oggopus",
+        }
+        if self._folder_id:
+            params["folderId"] = self._folder_id
+
+        headers = {"Authorization": f"Api-Key {self._api_key}"}
+        try:
+            async with httpx.AsyncClient(timeout=YANDEX_SPEECHKIT_TIMEOUT_SECONDS) as client:
+                response = await client.post(self._recognize_url, params=params, content=ogg_audio, headers=headers)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail="SpeechKit rejected the audio") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="SpeechKit request failed") from exc
+
+        return str(response.json().get("result", "")).strip()
+
+
+speechkit_client = SpeechKitClient(YANDEX_SPEECHKIT_API_KEY, YANDEX_SPEECHKIT_FOLDER_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +802,10 @@ class DispatcherResponse(BaseModel):
     escalated: bool
 
 
+class TranscribeResponse(BaseModel):
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -736,7 +827,12 @@ def log_message(db: Session, *, session_id: str, station_code: str, source: str,
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.execute(text("SELECT pg_advisory_lock(774601)"))
+        try:
+            Base.metadata.create_all(bind=connection)
+        finally:
+            connection.execute(text("SELECT pg_advisory_unlock(774601)"))
     yield
 
 
@@ -885,3 +981,32 @@ async def contact_dispatcher(payload: DispatcherRequest, db: Annotated[Session, 
     )
 
     return DispatcherResponse(status="ok", phone=DISPATCHER_PHONE, escalated=escalated)
+
+
+@app.post("/api/public/transcribe", response_model=TranscribeResponse)
+async def transcribe_audio(
+    access_token: Annotated[str, Form()],
+    session_id: Annotated[str, Form(min_length=8)],
+    audio: Annotated[UploadFile, File()],
+    db: Annotated[Session, Depends(get_db)],
+):
+    access = validate_qr_token(access_token)
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file is empty")
+    if len(audio_bytes) > VOICE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file is too large")
+
+    text = await speechkit_client.transcribe(audio_bytes)
+    if not text:
+        raise HTTPException(status_code=422, detail="Speech was not recognized")
+
+    log_message(
+        db,
+        session_id=session_id,
+        station_code=access.station_code,
+        source="speech_to_text",
+        role="user",
+        content=text,
+    )
+    return TranscribeResponse(text=text)

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
+import microphoneIcon from './assets/microphone.png'
+import sendIcon from './assets/send.png'
 
 const API_BASE = '/api'
 
@@ -15,6 +17,15 @@ async function apiPost(path, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error('Request failed')
+  return response.json()
+}
+
+async function apiPostForm(path, formData) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    body: formData,
   })
   if (!response.ok) throw new Error('Request failed')
   return response.json()
@@ -71,6 +82,16 @@ function createMessageId() {
   return globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+function getSupportedAudioMimeType() {
+  const candidates = [
+    'audio/ogg;codecs=opus',
+    'audio/webm;codecs=opus',
+    'audio/ogg',
+    'audio/webm',
+  ]
+  return candidates.find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || ''
+}
+
 const STATION_ENTRIES = [
   {
     stationCode: 'AZS-001',
@@ -99,10 +120,16 @@ export default function App() {
   const [showFaqPanel, setShowFaqPanel] = useState(true)
   const [entryMode, setEntryMode] = useState('agent')
   const [accessToken, setAccessToken] = useState('')
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
 
   const bottomAnchorRef = useRef(null)
   const chatBoxRef = useRef(null)
   const inputRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const mediaStreamRef = useRef(null)
+  const audioChunksRef = useRef([])
+  const recordingTimerRef = useRef(null)
 
   function resetBoot(next = {}) {
     setBoot({
@@ -236,6 +263,13 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current)
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+    }
+  }, [])
+
+  useEffect(() => {
     const chatBox = chatBoxRef.current
     if (!chatBox) return
 
@@ -250,6 +284,14 @@ export default function App() {
       return () => clearTimeout(timer)
     }
   }, [mode])
+
+  useEffect(() => {
+    const field = inputRef.current
+    if (!field) return
+
+    field.style.height = 'auto'
+    field.style.height = `${Math.min(field.scrollHeight, 172)}px`
+  }, [input])
 
   function appendMessage(message) {
     setMessages((prev) => [...prev, { id: createMessageId(), ...message }])
@@ -270,7 +312,7 @@ export default function App() {
 
   async function handleAsk() {
     const question = input.trim()
-    if (!question || busy) return
+    if (!question || busy || transcribing) return
 
     setBusy(true)
     setAwaitingFeedback(false)
@@ -352,7 +394,7 @@ export default function App() {
   }
 
   async function handleDispatcher() {
-    if (busy) return
+    if (busy || transcribing) return
 
     setBusy(true)
     setShowFaqPanel(false)
@@ -391,6 +433,93 @@ export default function App() {
   function openAskMode() {
     setMode('ask')
     setShowFaqPanel(false)
+  }
+
+  function stopRecording() {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop()
+    }
+  }
+
+  async function transcribeAudio(blob) {
+    setTranscribing(true)
+    try {
+      const formData = new FormData()
+      formData.append('access_token', accessToken)
+      formData.append('session_id', boot.sessionId)
+      formData.append('audio', blob, 'question-audio.webm')
+      const data = await apiPostForm('/public/transcribe', formData)
+      setInput(data.text || '')
+      setMode('ask')
+      setShowFaqPanel(false)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    } catch {
+      appendMessage({
+        role: 'assistant',
+        text: 'Не удалось распознать голос. Попробуйте еще раз или введите вопрос текстом.',
+      })
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  async function toggleRecording() {
+    if (recording) {
+      stopRecording()
+      return
+    }
+
+    if (busy || transcribing || awaitingFeedback) return
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      appendMessage({
+        role: 'assistant',
+        text: 'Запись голоса доступна только в браузерах с поддержкой микрофона и обычно требует HTTPS. Пока можно ввести вопрос текстом.',
+      })
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = getSupportedAudioMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      audioChunksRef.current = []
+      mediaRecorderRef.current = recorder
+      mediaStreamRef.current = stream
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data)
+      }
+
+      recorder.onstop = () => {
+        setRecording(false)
+        stream.getTracks().forEach((track) => track.stop())
+        mediaStreamRef.current = null
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || 'audio/webm',
+        })
+        audioChunksRef.current = []
+        if (audioBlob.size > 0) transcribeAudio(audioBlob)
+      }
+
+      recorder.start()
+      setRecording(true)
+      setMode('ask')
+      setShowFaqPanel(false)
+      recordingTimerRef.current = setTimeout(stopRecording, 30000)
+    } catch {
+      appendMessage({
+        role: 'assistant',
+        text: 'Не получилось получить доступ к микрофону. Проверьте разрешения браузера или введите вопрос текстом.',
+      })
+    }
   }
 
   if (boot.loading) {
@@ -472,21 +601,46 @@ export default function App() {
 
         <div className={`composer-dock ${composerVisible ? 'visible' : ''}`}>
           <div className="composer">
-            <input
+            <textarea
               ref={inputRef}
               className="composer-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Например: как заправиться по банковской карте?"
-              onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
-              disabled={busy}
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleAsk()
+                }
+              }}
+              disabled={busy || transcribing || recording}
             />
+            <button
+              className={`composer-mic ${recording ? 'recording' : ''}`}
+              onClick={toggleRecording}
+              disabled={busy || transcribing || awaitingFeedback}
+              title={recording ? 'Остановить запись' : 'Задать вопрос голосом'}
+              aria-label={recording ? 'Остановить запись' : 'Задать вопрос голосом'}
+            >
+              {transcribing ? (
+                <span className="mic-loading" aria-hidden="true" />
+              ) : (
+                <img className="mic-icon" src={microphoneIcon} alt="" aria-hidden="true" />
+              )}
+            </button>
             <button
               className="composer-send"
               onClick={handleAsk}
-              disabled={busy || !input.trim() || awaitingFeedback}
+              title={busy ? 'Отправка...' : transcribing ? 'Распознаю...' : 'Отправить'}
+              aria-label={busy ? 'Отправка...' : transcribing ? 'Распознаю...' : 'Отправить'}
+              disabled={busy || transcribing || recording || !input.trim() || awaitingFeedback}
             >
-              {busy ? 'Отправка...' : 'Отправить'}
+              {busy || transcribing ? (
+                <span className="send-loading" aria-hidden="true" />
+              ) : (
+                <img className="send-icon" src={sendIcon} alt="" aria-hidden="true" />
+              )}
             </button>
           </div>
         </div>
@@ -509,24 +663,24 @@ export default function App() {
 
         <nav className="bottom-nav">
           <button
-            className={`nav-btn ${mode === 'faq' ? 'active' : ''}`}
+            className={`nav-btn nav-btn-faq ${mode === 'faq' ? 'active' : ''}`}
             onClick={openFaqPanel}
           >
             FAQ
           </button>
 
           <button
-            className={`nav-btn ${mode === 'ask' ? 'active' : ''}`}
+            className={`nav-btn nav-btn-ai ${mode === 'ask' ? 'active' : ''}`}
             onClick={openAskMode}
           >
             Спросить AI
           </button>
 
           <button
-            className={`nav-btn ${mode === 'dispatcher' ? 'active' : ''}`}
+            className={`nav-btn nav-btn-dispatcher ${mode === 'dispatcher' ? 'active' : ''}`}
             onClick={handleDispatcher}
           >
-            Связаться с диспетчером
+            Связь с диспетчером
           </button>
         </nav>
       </div>
